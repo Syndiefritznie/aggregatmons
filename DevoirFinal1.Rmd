@@ -1,0 +1,230 @@
+---
+title: "Analyse des Aggrégats Monétaires de la BRH"
+author: "Sindy  Charles"
+date: "2/6/2022"
+output:
+  word_document: default
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+
+Le but de ce document est de faire une analyse des aggrégats monétaires de la BRH en utilisant le fichier [aggregat monétaire](https://www.brh.ht/wp-content/uploads/agregatsmon.xls). Ce travail sera divisé en plusiers étapes. Nous aurons à 
+
+* Choisir trois variables et vérifier si elles sont stationnaires en niveau ou en différence première ou deuxième.
+* Vérifier le sens de la causalité, au sens de Granger, entre ces trois variables
+* Réaliser une régression linéaire qui tient compte des résultats des tests de causalité
+
+
+# Developement
+
+Nous allons acquérir les données de la BRH par la suite, nous allons nettoyer les données. Nous afficherons par la suite un résumé de ces données.  
+
+
+## Acquisition et Nettoyage du Fichier
+
+Comme nous l'avons déja mentionné, le fichier sera acquis sur le site de la BRH et sera par la suite néttoyé afin d'avoir une table de données lisible et exploitable. Pour ce faire, les valeurs NA sont supprimés, les colonnes sont renommées. Le sommaire des données se présente ainsi : nous avons un total de 517 observations and 69 variables. Nous allons considérés les données à partir de 1990.  
+
+```{r echo=FALSE, warning=FALSE}
+
+library(tidyverse)
+library(readxl)
+library(dplyr)
+library(xts)
+library(lmtest)
+
+all_na <- function(x) any(!is.na(x))
+
+#Acquisition du fichier 
+
+url <- "https://www.brh.ht/wp-content/uploads/agregatsmon.xls"
+destfile <- "output.xls"
+download.file(url, destfile)
+
+#Lecture du Fichier 
+aggregaMonsRaw <- read_excel(destfile, range = "A3:CE521")
+
+#Traitement et Netoyyage de Données
+
+##Transformation en DataFrame
+df_aggrega_raw <- data.frame(aggregaMonsRaw)
+
+##Elimination des colonnes vides et des liges inutiles
+df_aggrega_raw = df_aggrega_raw[-1,]
+df_aggrega_raw_nona <- df_aggrega_raw %>% select_if(all_na)
+
+##Assignation de colonnes
+c0 <- c("ReportDate")
+c1 <- c("M1_Gourdes","M2_Gourdes","M3_Gourdes","M1_Dollars","M2_Dollars","M3_Dollars","Taux_Change_BRH","Base_Monetaire_Gourdes","Base_Monetaire_Dollars","Monnaie_Circulation_Gourdes")
+c2 <- c("Crédit_sect_pubm","Multiplicateur_M3","Multiplicateur_M2","Multiplicateur_M1","Réserves_Nettes_De_Change","Reserves_nettes_de_change_system_Banc","Inflation_glisse_annuel","Cred_sect_priv_Gdes","Cred_sect_priv_Dolalr","Credit_total_sect_priv","Cred_sect_priv_Dollar","Credit_net_Etat","Credit_net_Coll_loc")
+c3 <- c("Cred_net_Ent_Pub","Cred_net_Sect_Pub","Depots_gdes","Depots_dollars_gourdes","Depots_tot_gourdes_dollar","Depots_dollars","Depots_Dollar_sur_Dep_gourdes","Creances_nettes_Etat","Creances_nettes_collectiv_locales","Creances_nettes_entreprises_pubmiq")
+c4 <- c("Creances_nettes_secteur_pubmic","Reserves_nettes_de_changes_BRH_avec_depots_des_BCMs_dollar","Reserves_nettes_de_change_du_syst_banc_dollar","Reserves_brutes_de_change_BRH_avec_depot_dollar","Reserves_brutes_de_change_du_syst_banc","Depots_dollars_des_BCM_BRH_CAM_Transfert","Depots_dollars_des_BCM_BRH","Reserves_nettes_de_change_BRH_sans_depots_des_BCM_gourdes","Avoirs_exterieurs_nets_sans_depotBanques","Reserves_brutes_de_change_BRH_sans_depots_des_BCM_gourdes_dollars")
+c5 <- c("Reserves_nettes_de_change_TMU","Depots_a_vue","Depots_epargne","Depots_terme","Total_Depots","DAV_DT","DE_DT","DAT_DT","Dep_Dollar_DT","DAV_G_DAT_G")
+c6 <- c("DE_G_DAT_G_","DAV_dollar","DE_Dollars","DAT_dollar","Total_Depots_Dollar","Avoirs_Exter_bruts_Système_banc_gourdes","Engagem_Exter_du_Système_banc_gourdes","Avoirs_Exter_nets_Système_banc_gourdes","Avoirs_Exter_Bruts_Bques_Commerc_gourdes","Engagem_Exter_Bques_Commerc_gourdes")
+c7 <- c("Avoirs_Exter_Nets_Bques_Commerc_gourdes","Depot_Dollar_Deptot","Credit_dollar_Depot_dollar","Credit_Dollar_Credit_total","Depot_M3")
+
+colnames(df_aggrega_raw_nona) <- c(c0,c1,c2,c3,c4,c5,c6,c7)
+
+## Conversion des colonnes en type de donnees appropriées
+cols.num <- c(c0,c1,c2,c3,c4,c5,c6,c7)
+df_aggrega_raw_nona[cols.num] <- sapply(df_aggrega_raw_nona[cols.num],as.numeric)
+## lors de l'importation en excel, les dates apparaissent en numérique, je convertis en date avec l'origine de l'excel
+df_aggrega_raw_nona$ReportDate <- as.Date(df_aggrega_raw_nona$ReportDate , origin = "1899-12-30")
+
+df_aggrega_90plus <- df_aggrega_raw_nona %>% filter(ReportDate >= "1990-01-01")
+
+glimpse(df_aggrega_90plus)
+
+```
+
+## Choix des variables
+
+Nous allons choisir les variables suivants pour notre étude à partir des années 1990. 
+
+* Taux de Change BRH
+* M1 Dollars 
+* Inflation Glissement Annuelle
+
+Voici les dix premières lignes de cette table
+
+``` {r echo=FALSE, warning=FALSE}
+
+df_aggrega_90plusVariables <- df_aggrega_90plus %>% select(ReportDate,Taux_Change_BRH, M3_Dollars, Inflation_glisse_annuel)
+
+head(df_aggrega_90plusVariables)
+
+```
+
+## Stationarité des variables 
+
+Nous ferons une conversion en xts pour vérifier la stationarité de 1990 à 2021. Nous remarquons que les graphes ne sont pas stationnaires pour ces trois variables.
+
+
+``` {r echo=FALSE, warning=FALSE}
+
+df_aggrega_90plusVariables_xts <- xts(df_aggrega_90plusVariables[,-1], order.by=as.Date(df_aggrega_90plusVariables[,1], "%Y/%m/%d"))
+
+
+par(mfrow = c(3,1), mex = 0.6, cex = 0.8)
+plot(df_aggrega_90plusVariables_xts$Taux_Change_BRH, main = "Taux de Change")
+plot(df_aggrega_90plusVariables_xts$M3_Dollars, main = "M3_Dollars")
+plot(df_aggrega_90plusVariables_xts$Inflation_glisse_annuel, main = "Inflation Glisse Annuel")
+
+```
+
+
+Vérifions la différence entre 1990 et 2021
+
+
+``` {r echo=FALSE, warning=FALSE}
+
+diff_Taux_Change_BRH_1 <- diff(df_aggrega_90plusVariables_xts$Taux_Change_BRH, differences = 1)
+diff_Taux_Change_BRH_2 <- diff(df_aggrega_90plusVariables_xts$Taux_Change_BRH, differences = 2)
+
+diff_M3_Dollars_1 <- diff(df_aggrega_90plusVariables_xts$M3_Dollars, differences = 1)
+diff_M3_Dollars_2 <- diff(df_aggrega_90plusVariables_xts$M3_Dollars, differences = 2)
+
+diff_Inflation_glisse_annuel_1 <- diff(df_aggrega_90plusVariables_xts$Inflation_glisse_annuel, differences = 1)
+diff_Inflation_glisse_annuel_2 <- diff(df_aggrega_90plusVariables_xts$Inflation_glisse_annuel, differences = 2)
+
+par(mfrow = c(3,2), mex = 0.6, cex = 0.8)
+plot(diff_Taux_Change_BRH_1, main = "Diff 1 Taux de Change")
+plot(diff_Taux_Change_BRH_2, main = "Diff 2 Taux de Change")
+plot(diff_M3_Dollars_1, main = "Diff 1 M3 Dollars ")
+plot(diff_M3_Dollars_2, main = "Diff 2 M3 Dollars")
+plot(diff_Inflation_glisse_annuel_1, main = "Diff 1 Inflation Glisse Annuel")
+plot(diff_Inflation_glisse_annuel_2, main = "Diff 2 Inflation Glisse Annuel")
+
+```
+
+Nous remarquons que les variables sont stationnaires d'ordre 1. Il n'y a pas vraiment de différence quand on fait la différence d'ordre 2. 
+
+## Sens de la causalité, au sens de Granger
+
+Vérifions le sens de la causalité au sens de grangerTest. Nous utiliserons la librarie lmtest et l'ordre sera 1 étant donnée que ces trois variables sont stationnaires en différence première. Nous allons vérifier les hypothèses suivantes.
+
+### Taux de Change et M3_Dollars
+
+Hypothèse (H0):
+
+Taux de change 
+La série chronologique M3_Dollars n'entraîne pas la série chronologique Taux De Change à une causalité au sens de Granger
+
+
+Hypothèse Alternative  (H1):
+
+La série chronologique M3_Dollars entraîne pas la série chronologique Taux De Change à une causalité au sens de Granger
+
+
+``` {r echo=FALSE, warning=FALSE}
+grangertest(Taux_Change_BRH ~ M3_Dollars, order = 1, data = df_aggrega_90plusVariables)
+
+```
+
+Nous constatons que la valeur de p est inférieur à 0.05, nous rejetons H0.
+
+### Inflation_glisse_annuel et M3_Dollars
+Hypothèse (H0):
+
+Taux de change 
+La série chronologique M3_Dollars n'entraîne pas la série chronologique Inflation Annuelle à une causalité au sens de Granger
+
+
+Hypothèse Alternative  (H1):
+
+La série chronologique M3_Dollars entraîne pas la série chronologique Inflation Annuelle à une causalité au sens de Granger
+
+
+``` {r echo=FALSE, warning=FALSE}
+grangertest(Inflation_glisse_annuel ~ M3_Dollars, order = 1, data = df_aggrega_90plusVariables)
+
+```
+
+Nous constatons que la valeur de p est supérieure à 0.05. Donc on garde H0. 
+
+
+### Inflation_glisse_annuel et Taux de Change
+
+Hypothèse (H0):
+
+La série chronologique Inflation_glisse_annuel n'entraîne pas la série chronologique Taux_Change_BRH à une causalité au sens de Granger
+
+
+Hypothèse Alternative  (H1):
+
+La série chronologique Inflation_glisse_annuel entraîne pas la série chronologique Taux_Change_BRH à une causalité au sens de Granger
+
+
+``` {r echo=FALSE, warning=FALSE}
+grangertest(Taux_Change_BRH ~ Inflation_glisse_annuel, order = 1, data = df_aggrega_90plusVariables)
+
+```
+
+Nous constatons que la valeur de p est supérieure à 0.05. Donc on garde H0. 
+
+
+## Régression Linéaire 
+
+Nous utilisations la fonction lm pour la régression linéaire.
+
+``` {r echo=FALSE, warning=FALSE}
+
+summary(lm(Taux_Change_BRH ~ M3_Dollars, data = df_aggrega_90plusVariables))
+
+summary(lm(Inflation_glisse_annuel ~ M3_Dollars, data = df_aggrega_90plusVariables))
+
+summary(lm(Taux_Change_BRH ~ Inflation_glisse_annuel, data = df_aggrega_90plusVariables))
+
+
+```
+
+
+## Conclusion
+
+Nous avons vu que les trois variables sont stationnaire en différence première et que M3 n'entraine pas l'inflation, et l'inflation n'entraine pas le taux de change, c'est à dire une projection the M3 ne peut être utile pour une projection de l'inflation, de même pour l'inflation par rapport au taux de change. Néanmoins, on peut avoir un effet inverse entre le taux de change et l'inflation.  D'autre part, La série chronologique M3_Dollars entraîne pas la série chronologique Taux De Change à une causalité au sens de Granger. C'est à dire, une prédiction de la série M3 peut être bénéfique à une prédiction du Taux de Change. 
+
